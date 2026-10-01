@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Live Detection</title>
+<style>
+  body{font-family:sans-serif;background:#111;color:#eee;margin:0;padding:12px;text-align:center}
+  .wrap{position:relative;max-width:720px;margin:auto}
+  video,#ov{width:100%;display:block}
+  #ov{position:absolute;left:0;top:0}
+  input,button{padding:8px 12px;margin:4px;font-size:15px}
+</style>
+</head>
+<body>
+<h3>Live Detection</h3>
+<input id="key" placeholder="API key">
+<button id="start">Start</button>
+<button id="stop">Stop</button>
+<div id="st">idle</div>
+<div class="wrap">
+  <video id="v" autoplay playsinline muted></video>
+  <canvas id="ov"></canvas>
+</div>
+<canvas id="cap" style="display:none"></canvas>
+
+<script>
+const v = document.getElementById('v'), ov = document.getElementById('ov'),
+      cap = document.getElementById('cap'), st = document.getElementById('st');
+const CAP_W = 480;        // frame width sent to server (smaller = faster)
+let ws = null, stream = null, running = false, t0 = 0, fps = 0;
+
+async function start() {
+  if (running) return;
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'environment', width: { ideal: 1280 } }, audio: false });
+  v.srcObject = stream;
+  await v.play();
+  cap.width = CAP_W;
+  cap.height = Math.round(CAP_W * v.videoHeight / v.videoWidth);
+  ov.width = cap.width; ov.height = cap.height;
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const key = encodeURIComponent(document.getElementById('key').value);
+  ws = new WebSocket(`${proto}://${location.host}/ws?key=${key}`);
+  running = true;
+  ws.onopen = () => { st.textContent = 'connected'; sendFrame(); };
+  ws.onmessage = e => { draw(JSON.parse(e.data)); sendFrame(); };
+  ws.onclose = ev => { st.textContent = ev.code === 1013 ? 'server busy' :
+                       ev.code === 1008 ? 'bad api key' : 'disconnected'; cleanup(); };
+}
+
+function sendFrame() {
+  if (!running || !ws || ws.readyState !== 1) return;
+  cap.getContext('2d').drawImage(v, 0, 0, cap.width, cap.height);
+  cap.toBlob(b => { if (running && ws.readyState === 1) ws.send(b); }, 'image/jpeg', 0.7);
+}
+
+function draw(d) {
+  const c = ov.getContext('2d');
+  c.clearRect(0, 0, ov.width, ov.height);
+  c.lineWidth = 2; c.font = '14px sans-serif';
+  const sx = ov.width / d.w, sy = ov.height / d.h;
+  for (const o of d.detections) {
+    const [x1, y1, x2, y2] = o.box;
+    c.strokeStyle = '#0f0'; c.fillStyle = '#0f0';
+    c.strokeRect(x1 * sx, y1 * sy, (x2 - x1) * sx, (y2 - y1) * sy);
+    c.fillText(`${o.cls} #${o.id} ${o.conf.toFixed(2)}`, x1 * sx, Math.max(y1 * sy - 4, 12));
+  }
+  const now = performance.now();
+  fps = 0.9 * fps + 0.1 * (1000 / (now - t0 || 1000)); t0 = now;
+  st.textContent = `${fps.toFixed(1)} FPS, ${d.detections.length} objects`;
+}
+
+function cleanup() {
+  running = false;
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; v.srcObject = null;
+  ov.getContext('2d').clearRect(0, 0, ov.width, ov.height);
+}
+
+document.getElementById('start').onclick = () => start().catch(e => st.textContent = e.message);
+document.getElementById('stop').onclick = () => { if (ws) ws.close(); cleanup(); };
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: live-detector
+    runtime: docker
+    plan: standard
+    healthCheckPath: /health
+    envVars:
+      - key: API_KEY
+        sync: false
+      - key: CLASSES
+        value: "0"
+      - key: CONF
+        value: "0.6"
+      - key: WEIGHTS
+        value: yolo11n.pt
+      - key: MAX_CONN
+        value: "2"
